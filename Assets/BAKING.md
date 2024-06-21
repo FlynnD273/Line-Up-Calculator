@@ -8,7 +8,7 @@ I'll be using the Ascent Blender file as an example, but it should work pretty m
 - Go to the text editor in Blender, and open the `bake.py` file
 - Run that file. It will take a long time. It's faster if you have a GPU, but it will still take a while. My friend's PC took like 10 hours with an RTX 3070
 	- If you want to increase the final texture resolution, change the `tex_size` variable on line 6 of the `bake.py` script. If you edit the script outside of Blender, make sure to reload the file in Blender to get the new changes
-- Copy the `Textures` folder and the `OBj-Ascent.obj` file into the Unity Assets folder
+- Copy the `Textures` folder, the `OBj-Ascent.obj` file, and the `OBJ-Ascent.mtl` file into the Unity Assets folder
 - Open Unity and let it import all the textures. This will take a while
 - Copy the `generate-mats.py` and `link-mats.py` scripts into the Assets Unity folder (if you haven't already)
 - You must have Python installed for the next part
