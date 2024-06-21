@@ -1,0 +1,5 @@
+  - first:
+      type: UnityEngine:Material
+      assembly: UnityEngine.CoreModule
+      name: $$NAME_PLACEHOLDER$$
+    second: {fileID: 2100000, guid: $$GUID_PLACEHOLDER$$, type: 2}
