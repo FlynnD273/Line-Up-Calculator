@@ -9,6 +9,8 @@ if not os.path.exists("Materials"):
 
 textures = glob.glob(os.path.join("Textures", "*.png"))
 for i, texture in enumerate(textures):
+    if texture.endswith("_ALPHA.png"):
+        continue
     print(f"\r({i + 1}/{len(textures)}) Creating material for {texture}")
     name = os.path.splitext(os.path.basename(texture))[0]
     meta_path = texture + ".meta"
