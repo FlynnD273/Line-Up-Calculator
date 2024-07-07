@@ -11,14 +11,15 @@ with open("template-link.txt", "r") as file:
 
 mat_names: list[tuple[str, str]] = []
 
+print("Reading materials...")
 textures = glob.glob(os.path.join("Materials", "*.mat"))
 for i, material in enumerate(textures):
-    print(f"\r({i + 1}/{len(textures)}) reading material for {material}")
     name = os.path.splitext(os.path.basename(material))[0]
     with open(material + ".meta", "r") as file:
         guid = file.readlines()[1].split(":")[1].strip()
 
     mat_names.append((name, guid))
+print("Done.\nLinking materials...")
 
 with open(args.input + ".meta", "r") as file:
     obj_meta = file.readlines()
@@ -28,8 +29,20 @@ while i < len(obj_meta) and obj_meta[i].strip() != "externalObjects: {}":
     i += 1
 
 if i == len(obj_meta):
-    print(f"Error! externalObjects line not found in {args.input + '.meta'}. (malformed meta file?)")
-    exit(1)
+    print("Nonempty meta file detected. Resetting...")
+    i = 0
+    while i < len(obj_meta) and obj_meta[i].strip() != "externalObjects:":
+        i += 1
+
+    end = i
+    while end < len(obj_meta) and obj_meta[end].strip() != "materials:":
+        end += 1
+
+    if end == len(obj_meta):
+        print(f"Error! Error parsing {args.input + '.meta'}. (malformed meta file?)")
+        exit(1)
+
+    del obj_meta[i + 1:end - 1]
 
 obj_meta[i] = obj_meta[i].replace(" {}", "")
 i += 1
@@ -39,6 +52,7 @@ for name, guid in mat_names:
     )
 
     obj_meta.insert(i, mat_ref)
+print("Done.")
 
 with open(args.input + ".meta", "w") as file:
     file.writelines(obj_meta)

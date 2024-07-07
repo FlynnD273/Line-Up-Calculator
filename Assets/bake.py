@@ -1,3 +1,4 @@
+import platform
 import bpy
 from time import time
 from datetime import timedelta
@@ -17,8 +18,6 @@ def shutdown() -> None:
 signal.signal(signal.SIGINT, lambda _, b: shutdown())
 
 tex_size = 512
-bpy.context.scene.render.resolution_x = tex_size
-bpy.context.scene.render.resolution_y = tex_size
 
 output_dir = os.path.join(bpy.path.abspath("//"), "Textures")
 if not os.path.exists(output_dir):
@@ -30,7 +29,20 @@ bpy.context.scene.cycles.device = "GPU"
 objs = [o for o in bpy.context.visible_objects if o.material_slots and o.type == "MESH"]
 
 
+def get_group(node_tree):
+    for node in node_tree.nodes:
+        if node.type == "GROUP":
+            print(node.node_tree.name)
+            if node.node_tree.name.startswith(
+                "BaseEnv"
+            ) or node.node_tree.name.startswith("FALLBACK"):
+                return node
+    return None
+
+
 def maprange(val, low, high, new_low, new_high, clamp=True):
+    if high == low or new_high == new_low:
+        return new_high
     newval = (val - low) / (high - low) * (new_high - new_low) + new_low
     if clamp:
         newval = min(max(newval, new_low), new_high)
@@ -61,6 +73,9 @@ obj_scl = [maprange(s, min_val, max_val, 0.5, 1) for s in obj_scl]
 
 start_time = time()
 for i, obj in enumerate(objs):
+    if is_shutdown:
+        break
+
     avg = (time() - start_time) / (i + 1)
     print(
         f"\rBaking {obj.name} | {i + 1}/{len(objs)} Time left: {timedelta(seconds= avg * (len(objs) - i))}{' '*10}"
@@ -87,13 +102,17 @@ for i, obj in enumerate(objs):
     bpy.ops.object.mode_set(mode="OBJECT")
 
     if obj.material_slots is not None and len(obj.material_slots) > 0:
-        # One image per object. This eliminates name collisions and hopefully keeps the file size down
+        if is_shutdown:
+            break
+
         img_name = obj.name + "-bake"
         diffuse_path = os.path.join(output_dir, img_name + ".png")
         if os.path.exists(diffuse_path):
             continue
 
         scl_size = int(max(tex_size * obj_scl[i], 1))
+        bpy.context.scene.render.resolution_x = scl_size
+        bpy.context.scene.render.resolution_y = scl_size
         bpy.ops.image.new(name=img_name, width=scl_size, height=scl_size)
         bake_image = bpy.data.images[img_name]
 
@@ -104,7 +123,18 @@ for i, obj in enumerate(objs):
             material = slot.material
 
             tree = material.node_tree
+
+            grp = None
+            next_grp = get_group(tree)
+            while next_grp is not None:
+                tree = next_grp.node_tree
+                grp = next_grp
+                next_grp = get_group(tree)
+
             nodes = tree.nodes
+
+            prince = nodes.get("Principled BSDF")
+            assert prince is not None
 
             uv_map_node = nodes.new(type="ShaderNodeUVMap")
             uv_map_node.uv_map = uvmap
@@ -113,26 +143,30 @@ for i, obj in enumerate(objs):
 
             texture_node = nodes.new(type="ShaderNodeTexImage")
             texture_node.image = bake_image
-            output = tree.get_output_node("CYCLES")
 
             tree.links.new(texture_node.inputs[0], uv_map_node.outputs["UV"])
             nodes.active = texture_node
             texture_node.select = False
 
-            to_delete.append((nodes, uv_map_node, texture_node))
+            to_delete.append((nodes, uv_map_node))
+            to_delete.append((nodes, texture_node))
+
+            output_socket = nodes.get("Group Output").inputs[0]
+
+            for link in tree.links:
+                if link.to_socket == prince.inputs["Base Color"]:
+                    tree.links.new(link.from_socket, output_socket)
 
         # It's baking time
-        bpy.context.scene.cycles.bake_type = "DIFFUSE"
+        bpy.context.scene.cycles.bake_type = "EMIT"
         bpy.context.scene.render.bake.use_pass_direct = False
         bpy.context.scene.render.bake.use_pass_indirect = False
         bpy.context.scene.render.bake.use_pass_color = True
-        bpy.ops.object.bake(type="DIFFUSE")
+        bpy.ops.object.bake(type="EMIT")
         bake_image.file_format = "PNG"
         bake_image.filepath_raw = diffuse_path
         bake_image.save()
 
-        # Bake alpha, should the need arise
-        should_bake_alpha = False
         for slot in obj.material_slots:
             material = slot.material
 
@@ -140,55 +174,54 @@ for i, obj in enumerate(objs):
             nodes = tree.nodes
 
             grp = None
-            for node in nodes:
-                if node.type == "GROUP" and node.node_tree.name.startswith(
-                    "BaseEnv_MAT"
-                ):
-                    grp = node
-                    break
+            next_grp = get_group(tree)
+            while next_grp is not None:
+                tree = next_grp.node_tree
+                grp = next_grp
+                next_grp = get_group(tree)
 
-            if grp is not None:
-                output_socket = grp.inputs["Diffuse_ALPHA"]
-                output_node = tree.get_output_node("CYCLES")
-                for link in tree.links:
-                    if link.to_socket == output_socket:
-                        output_socket = link.from_socket
-                        tree.links.new(output_socket, output_node.inputs[0])
-                        should_bake_alpha = True
-                        break
+            nodes = tree.nodes
 
-        if should_bake_alpha:
-            bpy.ops.object.bake(type="EMIT")
-            alpha_path = os.path.join(output_dir, img_name + "_ALPHA.png")
-            bake_image.filepath_raw = alpha_path
-            bake_image.save()
-            cmd = [
-                "magick",
-                "convert",
-                alpha_path,
-                "-colorspace",
-                "gray",
-                alpha_path,
-            ]
-            subprocess.run(cmd)
-            cmd = [
-                "magick",
-                "convert",
-                diffuse_path,
-                alpha_path,
-                "-alpha",
-                "Off",
-                "-compose",
-                "CopyOpacity",
-                "-composite",
-                diffuse_path,
-            ]
-            subprocess.run(cmd)
-            os.remove(alpha_path)
+            prince = nodes.get("Principled BSDF")
+            assert prince is not None
 
-        for nodes, uv, tex in to_delete:
-            nodes.remove(uv)
-            nodes.remove(tex)
+            output_socket = nodes.get("Group Output").inputs[0]
+
+            for link in tree.links:
+                if link.to_socket == prince.inputs["Alpha"]:
+                    tree.links.new(link.from_socket, output_socket)
+
+        bpy.ops.object.bake(type="EMIT")
+        alpha_path = os.path.join(output_dir, img_name + "_ALPHA.png")
+        bake_image.filepath_raw = alpha_path
+        bake_image.save()
+
+        if platform.system() == "Windows":
+            magick_cmd = ["magick", "convert"]
+        else:
+            magick_cmd = ["convert"]
+        cmd = magick_cmd + [
+            alpha_path,
+            "-colorspace",
+            "gray",
+            alpha_path,
+        ]
+        subprocess.run(cmd)
+        cmd = magick_cmd + [
+            diffuse_path,
+            alpha_path,
+            "-alpha",
+            "Off",
+            "-compose",
+            "CopyOpacity",
+            "-composite",
+            diffuse_path,
+        ]
+        subprocess.run(cmd)
+        os.remove(alpha_path)
+
+        for nodes, node in to_delete:
+            nodes.remove(node)
 
         bpy.data.images[img_name].gl_free()
         bpy.data.images.remove(bake_image)
@@ -196,45 +229,42 @@ for i, obj in enumerate(objs):
             do_local_ids=True, do_linked_ids=True, do_recursive=True
         )
 
-        if is_shutdown:
-            break
 
 if not is_shutdown:
     print("Replacing materials...")
     for obj in objs:
         obj.data.materials.clear()
         img_name = obj.name + "-bake"
+        bake_image = bpy.data.images.load(os.path.join("Textures", img_name + ".png"))
         new_material = bpy.data.materials.new(name=img_name)
         obj.data.materials.append(new_material)
-        # new_material.use_nodes = True
+        new_material.use_nodes = True
 
-        # tree = new_material.node_tree
-        # nodes = tree.nodes
+        tree = new_material.node_tree
+        nodes = tree.nodes
 
-        # nodes.remove(nodes.get("Principled BSDF"))
+        prince = nodes.get("Principled BSDF")
+        prince.location = (500, 0)
 
         # Add the UV map, image texture, and diffuse nodes
-        # output = tree.get_output_node("CYCLES")
-        # output.location = (700, 0)
+        output = tree.get_output_node("CYCLES")
+        output.location = (700, 0)
 
-        # uv_map_node = nodes.new(type="ShaderNodeUVMap")
-        # uv_map_node.uv_map = uvmap
-        # uv_map_node.location = (-50, 0)
-        # uv_map_node.select = False
+        uv_map_node = nodes.new(type="ShaderNodeUVMap")
+        uv_map_node.uv_map = uvmap
+        uv_map_node.location = (-50, 0)
+        uv_map_node.select = False
 
-        # texture_node = nodes.new(type="ShaderNodeTexImage")
-        # texture_node.image = bake_image
-        # texture_node.select = False
-        # texture_node.location = (150, 0)
-
-        # diffuse = tree.nodes.new(type="ShaderNodeBsdfDiffuse")
-        # diffuse.select = False
-        # diffuse.location = (500, 0)
+        texture_node = nodes.new(type="ShaderNodeTexImage")
+        texture_node.image = bake_image
+        texture_node.select = False
+        texture_node.location = (150, 0)
 
         # Link everything together
-        # tree.links.new(texture_node.inputs[0], uv_map_node.outputs["UV"])
-        # tree.links.new(diffuse.inputs[0], texture_node.outputs[0])
-        # tree.links.new(output.inputs[0], diffuse.outputs[0])
+        tree.links.new(texture_node.inputs[0], uv_map_node.outputs["UV"])
+        tree.links.new(prince.inputs["Base Color"], texture_node.outputs[0])
+        tree.links.new(prince.inputs["Alpha"], texture_node.outputs[1])
+        tree.links.new(output.inputs[0], prince.outputs[0])
     print("Done")
     # Save the blend file as a copy
     folder = os.path.dirname(bpy.context.blend_data.filepath)
