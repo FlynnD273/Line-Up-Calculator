@@ -95,6 +95,10 @@ def process_obj(obj):
     bpy.ops.uv.smart_project()
     bpy.ops.object.mode_set(mode="OBJECT")
 
+def obj_to_path(obj):
+    img_name = obj.name + "-bake"
+    return os.path.join(output_dir, img_name + ".png")
+
 
 obj_scl = [get_surface_area(o) for o in objs]
 max_surf = max(obj_scl)
@@ -125,8 +129,7 @@ for i, obj in enumerate(objs):
     if is_shutdown:
         break
 
-    img_name = obj.name + "-bake"
-    diffuse_path = os.path.join(output_dir, img_name + ".png")
+    diffuse_path = obj_to_path(obj)
     if os.path.exists(diffuse_path):
         to_process.append(obj)
         continue
@@ -240,13 +243,23 @@ for i, obj in enumerate(objs):
 
 
 if not is_shutdown:
-    for obj in to_process:
+    start_time = time()
+    for i, obj in enumerate(to_process):
+        avg = (time() - start_time) / (i + 1)
+        print(
+            f"\rProcessing {obj.name} | {i + 1}/{len(objs)} Time left: {timedelta(seconds= avg * (len(objs) - i))}{' '*10}"
+        )
         process_obj(obj)
     print("Replacing materials...")
-    for obj in objs:
+    start_time = time()
+    for i, obj in enumerate(objs):
+        avg = (time() - start_time) / (i + 1)
+        print(
+            f"\rReplacing {obj.name} | {i + 1}/{len(objs)} Time left: {timedelta(seconds= avg * (len(objs) - i))}{' '*10}"
+        )
         obj.data.materials.clear()
         img_name = obj.name + "-bake"
-        bake_image = bpy.data.images.load(os.path.join("Textures", img_name + ".png"))
+        bake_image = bpy.data.images.load(obj_to_path(obj))
         new_material = bpy.data.materials.new(name=img_name)
         obj.data.materials.append(new_material)
         new_material.use_nodes = True
