@@ -74,6 +74,7 @@ def get_surface_area(obj):
     bm.free()
     return surface_area
 
+uvmap = "bakedUV"
 def process_obj(obj):
     # Select only obj
     bpy.ops.object.select_all(action="DESELECT")
@@ -85,7 +86,6 @@ def process_obj(obj):
     )
 
     # Unwrap to new UV map
-    uvmap = "bakedUV"
     if uvmap not in obj.data.uv_layers:
         obj.data.uv_layers.new(name=uvmap)
     old_active = obj.data.uv_layers.active.name
