@@ -137,6 +137,7 @@ for i, obj in enumerate(objs):
     process_obj(obj)
     uvmap = "bakedUV"
 
+    img_name = obj.name + "-bake"
     scl_size = int(max(tex_size * obj_scl[i], 1))
     bpy.context.scene.render.resolution_x = scl_size
     bpy.context.scene.render.resolution_y = scl_size
@@ -259,6 +260,7 @@ if not is_shutdown:
         )
         obj.data.materials.clear()
         img_name = obj.name + "-bake"
+        print(img_name)
         bake_image = bpy.data.images.load(obj_to_path(obj))
         new_material = bpy.data.materials.new(name=img_name)
         obj.data.materials.append(new_material)
